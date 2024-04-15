@@ -1,0 +1,150 @@
+// Required Libraries
+#include <WiFiNINA.h>
+#include <ArduinoMqttClient.h>
+#include "NewPing.h"
+
+// Retrieve SSID and PASS from Secrets tab
+char ssid[] = SECRET_SSID;
+char pass[] = SECRET_OPTIONAL_PASS; 
+
+// Declare pin identities
+const int ledPin = 2;
+const int trigPin = 3;
+const int echoPin = 3;
+
+// Create NewPing instance
+NewPing sonar(trigPin, echoPin);
+
+// Create WiFI and MQTT clients
+WiFiClient wifiClient;
+MqttClient mqttClient(wifiClient);
+
+// Set values of MQTT
+const char broker[] = "broker.emqx.io";
+int        port = 1883;
+const char wave[] = "SIT210/wave";
+const char pat[] = "SIT210/pat";
+
+// Set variables
+int distance = 0;
+bool wave_detected = false;
+bool pat_detected = false;
+
+void setup() 
+{  
+  // Initialize serial and wait for port to open
+  Serial.begin(9600);
+  while (!Serial);
+  delay(1500); 
+
+  // Initialize WiFi connection
+  Serial.println("Attempting to connect to SSID: ");
+  Serial.println(ssid);
+  while (WiFi.begin(ssid, pass) != WL_CONNECTED)
+  {
+    Serial.print(".");
+    delay(5000);
+  }
+  Serial.println();
+  Serial.println("Connection successful");
+
+  // Initialize MQTT connection
+  Serial.print("Attempting to connect to the MQTT broker: ");
+  Serial.println(broker);
+  if (!mqttClient.connect(broker, port))
+  {
+    Serial.print("MQTT connection failed! Error code = ");
+    Serial.println(mqttClient.connectError());
+    while (1);
+  }
+  Serial.println();
+  Serial.println("Connection successful");
+
+  // Subscripe to desired topics
+  mqttClient.subscribe(pat);
+  mqttClient.subscribe(wave);
+  
+  // Initialize pins
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(ledPin, OUTPUT);
+}
+
+void loop() 
+{
+  mqttClient.poll();
+  delay(500);
+
+  distance = sonar.ping_cm();
+  Serial.print("Distance = ");
+  Serial.print(distance);
+  Serial.println("cm");
+
+  if (distance <= 30 && distance > 5)
+  {        
+    mqttClient.beginMessage(wave);
+    mqttClient.println(wave);
+    mqttClient.print("*waved*");
+    mqttClient.endMessage();
+    delay(500);
+    wave_detected = true;
+  }
+  else if (distance <= 5)
+  {
+    mqttClient.beginMessage(pat);
+    mqttClient.println(pat);
+    mqttClient.print("*patted*");
+    mqttClient.endMessage();
+    delay(500);
+    pat_detected = true;
+  }
+
+  if(wave_detected || pat_detected )
+  {
+    int Msize = mqttClient.parseMessage();
+    Serial.print(Msize);
+    if (Msize)
+    {
+      Serial.println();
+      Serial.print("Received message with the subject ");
+      Serial.print(mqttClient.messageTopic());
+      Serial.print(", length ");
+      Serial.print(Msize);
+      Serial.println(" bytes:");
+  
+      while (mqttClient.available())
+      {
+        Serial.print((char)mqttClient.read());
+      }
+      Serial.println();
+
+      if (wave_detected)
+      {
+        for (int i = 0; i < 3; i++)
+        {
+          digitalWrite(ledPin, HIGH);
+          delay(200);
+          digitalWrite(ledPin, LOW);
+          delay(100);
+        }
+         wave_detected = false;
+      }
+      if (pat_detected)
+      {
+        for (int i = 0; i < 2; i++)
+        {
+          digitalWrite(ledPin, HIGH);
+          delay(200);
+          digitalWrite(ledPin, LOW);
+          delay(100);
+          digitalWrite(ledPin, HIGH);
+          delay(500);
+          digitalWrite(ledPin, LOW);
+          delay(100);
+        }
+         pat_detected = false;
+      }
+      Serial.println();
+    }
+  }
+}
